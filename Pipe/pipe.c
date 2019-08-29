@@ -22,7 +22,7 @@ int main()
             perror("write to pipe");
             break;
         }
-        memset(buf,0x00,sizeof(buf));
+        memset(buf,0,sizeof(buf));
         if((len=read(fd[0],buf,100))== -1)
         {
             perror("read from pipe");
