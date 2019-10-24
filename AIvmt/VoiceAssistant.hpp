@@ -9,15 +9,24 @@
 #include<fstream>
 #include<map>
 #include<unordered_map>
+#include<pthread.h>
 #include<json/json.h>
 #include<unistd.h>
+#include<sys/types.h>
+#include<sys/stat.h>
+#include<fcntl.h>
 #include"speech.h"
 #include "base/http.h"
 
-#define ASR_PATH "temp_file/asr.wav"//ASR表示自动语音识别
+#define ASR_PATH "temp_file/asr.wav"//ASR表示自动语音识别,语音识别文件路径
+//#define TTS_PATH "temp_file/tts.mp3"
+#define LOG "log.txt"
 #define CMD_ETC "command.etc"
+#define TTS_PATH "temp_file/tts.wav"
 class Util
 {
+    private:
+       static pthread_t id;
     public:
         static bool Exec(std::string command,bool is_print)
         {
@@ -42,7 +51,35 @@ class Util
             pclose(fp);
             return true;
         }
+        static void *ThreadRun(void *arg)
+        {
+            const char *tips = (char*)arg;
+            int i = 0;
+            char bar[103] = {0};
+            const char *lable = "|/-\\";
+            for(;i <= 50;i++)
+            {
+                printf("%s[%-51s][%d%%][%c]\r",tips,bar,i*2,lable[i%4]);
+                if(i % 2 == 0)
+                {
+                    fflush(stdout);
+                    bar[i] = '=';
+                    bar[i+1] = '>';
+                }
+                usleep(49000);
+            }
+            printf("\n");
+        }
+        static void PrintStart(std::string tips)
+        {
+            pthread_create(&id,NULL,ThreadRun,(void*)tips.c_str());
+        }
+        static void PrintEnd()
+        {
+            pthread_cancel(id);
+        }
 };
+pthread_t Util::id;
 class Robot
 {
     private: 
@@ -145,7 +182,7 @@ class Robot
         {
         }
 };
-//语音识别类
+//语音识别合成类
 class SpeechRec
 {
     private:
@@ -179,18 +216,47 @@ class SpeechRec
         bool ASR(std::string path,std::string &out)
         {
             std::map<std::string,std::string> options;
-            options["dev_pid"] = "1536";
+            options["dev_pid"] = "1536";//普通话
             std::string file_content;
             aip::get_file_content(ASR_PATH,&file_content);//要识别的语音文件
             Json::Value result = client->recognize(file_content,"wav",16000,options);
             //std::cout << "debug: " << result.toStyledString() << std::endl;//json格式的字符串
             int code = result["err_no"].asInt();
             if(IsCodeLegal(code))
-            {                std::cerr << "recongize error" << std::endl;
+            {   
+                std::cerr << "recongize error" << std::endl;
                 return false;
             }
             out = result["result"][0].asString();
             return true;
+        }
+        //语音合成
+        bool TTS(std::string message)
+        {
+            bool ret;
+            std::ofstream ofile;//文本输出流;
+            std::string ret_file;//返回的文件，语音合成之后的二进制语音流
+            std::map<std::string,std::string> options;//语音库，填充选项
+            options["spd"] = "15";//语速 0~15
+            options["pit"] = "5";//音调0~15
+            options["vol"] = "5";//0~15
+            options["per"] = "1";//度小宇=1，度小美=0，度逍遥=3，度丫丫=4度博文=106，度小童=110，度小萌=111，度米朵=103，度小娇=5 
+            options["aue"] = "6";
+            ofile.open(TTS_PATH,std::ios::out | std::ios::binary);
+            Json::Value result = client->text2audio(message,options,ret_file);
+            if(!ret_file.empty())
+            {
+                ofile << ret_file;
+                ofile.close();
+                ret = true;
+            }
+            else
+            {
+                std::cerr << result.toStyledString() << std::endl;
+                ret = false;
+            }
+            ofile.close();
+            return ret;
         }
         ~SpeechRec()
         {
@@ -202,8 +268,8 @@ class VoiceAssistant
     private:
         Robot rt;
         SpeechRec sr;
-        std::unorder_map<std::string,std::string> commands
-        private:
+        std::unordered_map<std::string,std::string> commands;
+    private:
         bool Record()
         {
             std::cout << "debug: " << "Record..." << std:: endl;
@@ -212,6 +278,12 @@ class VoiceAssistant
             bool ret = Util::Exec(command,false);
             std::cout << "debug: Record ... done" << std::endl;
             return ret;
+        }
+        bool Play()
+        {
+            std::string command = "cvlc --play-and-exit ";
+            command += TTS_PATH;
+            return Util::Exec(command,false);
         }
     public:
         VoiceAssistant()
@@ -223,7 +295,7 @@ class VoiceAssistant
             //1.读文件
             //2.解析内容
             //3.把解析的命令Key,Value值插入到map
-            ifstream in(CMD_ETC);
+            std::ifstream in(CMD_ETC);
             if(!in.is_open())
             {
                 std::cerr << "open error" << std::endl;
@@ -243,7 +315,7 @@ class VoiceAssistant
                 }
                 std::string k = str.substr(0,pos);//从0开始提取k，到pos处为止
                 std::string v = str.substr(pos+sep.size());
-                
+                k += "。";                
                 commands.insert(std::make_pair(k,v));
                 //commands.insert({k,v});
             }
@@ -251,12 +323,22 @@ class VoiceAssistant
             in.close();
             return true;
         }
-        bool IsCommand(std::string message)
+        bool IsCommand(std::string message,std::string &cmd)
         {
-            
+            auto iter = commands.find(message);
+            if(iter == commands.end())
+            {
+                return false;
+            }
+            cmd = iter->second;
+            return true;
         }
         void Run()
         {
+#ifdef _LOG_
+            int fd = open(LOG,O_WRONLY|O_CREAT,0644);
+            dup2(fd,2);//所有内容都往log中打
+#endif
             volatile bool quit = false;
             while(!quit)
             {
@@ -266,22 +348,41 @@ class VoiceAssistant
                     if(sr.ASR(ASR_PATH,message))
                     {
                         //1.判断是否是命令
-                        if(IsCommand(message))
+                        std::string cmd = "";
+                        if(IsCommand(message,cmd))
                         {
-                            
+                            std::cout << "[VoiceAssistant@localhost]$" << cmd << std::endl;
+                            Util::Exec(cmd,true);
+                            continue;
+                        }
+                        if(message == "你走吧。")
+                        {
+                            std:: string quit_message = "那我就走了，不要想我哦！";
+                            std::cout << "图灵机器人# " << quit_message << std::endl;
+                            if(sr.TTS(quit_message))
+                            {
+                                this->Play();
+                            }
+                            exit(0);
                         }
                         //2.将消息交给图灵机器人处理
                         std::cout << "我# " << message << std::endl;
                         std::string echo = rt.Talk(message);
                         std::cout << "图灵机器人# " << echo << std::endl;
+                        if(sr.TTS(echo))
+                        {
+                            this->Play();
+                        }
                     }
                 }
                 else//录音失败
                 {
                     std::cerr << "Record error..." << std::endl;
                 }
-
             }
+#ifdef _LOG_
+            close(fd);
+#endif
         }
         ~VoiceAssistant()
         {

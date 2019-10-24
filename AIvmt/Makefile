@@ -3,9 +3,10 @@ INCLUDE= -Ispeech/
 LIB= -ljsoncpp -lcurl -lcrypto
 bin=VoiceAssistant
 src=VoiceAssistant.cc
+FLAGS=-D_LOG_
 
 $(bin):$(src)
-	$(CC)  -o $@ $^ $(INCLUDE) $(LIB) -std=c++11 
+	$(CC)  -o $@ $^ $(FLAGS) $(INCLUDE) $(LIB) -std=c++11 
 .PHONY:clean
 clean:
 	rm -f $(bin)
