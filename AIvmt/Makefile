@@ -1,8 +1,8 @@
 CC=g++
 INCLUDE= -Ispeech/
-LIB= -ljsoncpp -lcurl -lcrypto
-bin=VoiceAssistant
-src=VoiceAssistant.cc
+LIB= -ljsoncpp -lcurl -lcrypto -lpthread
+bin=Sakura
+src=Sakura.cc
 FLAGS=-D_LOG_
 
 $(bin):$(src)
