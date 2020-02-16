@@ -16,7 +16,29 @@
 
 #define MAX 128
 using namespace std;
-
+class Util
+{
+public:
+    void SetNonBlock(int fd)
+    {
+        int fl = fcntl(fd,F_GETFL);
+        if(fl < 0)
+        {
+            perror("fcntl error");
+        }
+        fcntl(fp,F_SETFL,fl | O_NONBLOCK);
+    }
+    ssize_t Recv(int fd,char buf[])
+    {
+        char line[128];
+        ssize_t s = 0;
+        int total = 0;
+        while((s == recv(fd,buf+total,sizeof(buf),0)) > 0)
+        {
+            total += s;
+        }
+    }
+}
 class Sock
 {
 private:
@@ -37,6 +59,7 @@ public:
         }
         int opt = 1;//服务器主动把连接关闭了，为了保证服务器能够重启
         setsockopt(sock,SOL_SOCKET,SO_REUSEADDR,&opt,sizeof(opt));
+        Utol::SetNonBlock(sock);
     }
     void Bind(int port)
     {
@@ -65,6 +88,7 @@ public:
     }
     int Accept()
     {
+        
         struct sockaddr_in peer;
         socklen_t len = sizeof(peer);
         int fd = accept(sock,(struct sockaddr*)&peer,&len);
@@ -122,14 +146,18 @@ public:
             {
                 if(fd == linksock)//链接事件就绪
                 {
-                    int _sock = sock.Accept();
-                    if(_sock < 0)
+                    while(1)
                     {
-                        continue;
+                        int _sock = sock.Accept();
+                        if(_sock < 0)
+                        {
+                            break;
+                        }
+                        _ev.data.fd = _sock;
+                        Util::SetNonBlock(_sock);
+                        _ev.events = EPOLLIN|EPOLLET;
+                        epoll_ctl(epfd,EPOLL_CTL_ADD,_sock,&_ev);
                     }
-                    _ev.data.fd = _sock;
-                    _ev.events = EPOLLIN;
-                    epoll_ctl(epfd,EPOLL_CTL_ADD,_sock,&_ev);
                 }
                 else//读事件就绪
                 {
